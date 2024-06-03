@@ -1,0 +1,109 @@
+import pandas as pd
+import numpy as np
+from sklearn.utils import resample
+from sklearn.model_selection import train_test_split as tts
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+import streamlit as st
+
+# Load dataset
+data = pd.read_csv("fraudTest.csv")
+pd.set_option("display.max_columns", None)
+
+# Separate majority and minority classes
+majority_class = data[data['is_fraud'] == 0]
+minority_class = data[data['is_fraud'] == 1]
+
+# Downsample majority class to match the count of the minority class
+majority_downsampled = resample(majority_class,
+                                replace=False,  # Sample without replacement
+                                n_samples=2145,  # Match the desired count of minority class
+                                random_state=42)  # Reproducible results
+
+# Combine downsampled majority class with minority class
+balanced_data = pd.concat([majority_downsampled, minority_class])
+
+# Handling 'category' feature
+cato_count = balanced_data["category"].value_counts()
+balanced_data["category"] = balanced_data["category"].apply(lambda x: x if cato_count.get(x, 0) > 250 else "other category")
+
+# Creating dummy variables for 'category'
+category_dummies = pd.get_dummies(balanced_data["category"], drop_first=True)
+
+# Handling 'merchant' feature
+merchant_counts = data["merchant"].value_counts()
+balanced_data["merchant"] = data["merchant"].apply(lambda x: x if merchant_counts.get(x, 0) > 1250 else "other category")
+
+# Creating dummy variables for 'merchant'
+merchant_dummies = pd.get_dummies(balanced_data["merchant"], drop_first=True)
+
+# Select relevant columns and concatenate dummy variables
+new_data = balanced_data[["amt", "lat", "long", "merch_lat", "merch_long", "is_fraud", "cc_num"]]
+input_data = pd.concat([new_data, category_dummies, merchant_dummies], axis=1)
+
+# Separate features and target
+x = input_data.drop(["is_fraud"], axis=1)
+y = input_data["is_fraud"]
+
+# Split data into training and testing sets
+x_train, x_test, y_train, y_test = tts(x, y, test_size=0.2, random_state=42)
+
+# Train Logistic Regression model
+lr_model = LogisticRegression()
+lr_model.fit(x_train, y_train)
+lr_model_ypred = lr_model.predict(x_test)
+lr_model_ypred_score = accuracy_score(y_test, lr_model_ypred)
+
+# Train Decision Tree Classifier model
+dtc_model = DecisionTreeClassifier()
+dtc_model.fit(x_train, y_train)
+dtc_model_ypred = dtc_model.predict(x_test)
+dtc_model_ypred_score = accuracy_score(y_test, dtc_model_ypred)
+
+# Train Random Forest Classifier model
+rfc_model = RandomForestClassifier(n_estimators=100)
+rfc_model.fit(x_train, y_train)
+rfc_model_ypred = rfc_model.predict(x_test)
+rfc_model_ypred_score = accuracy_score(y_test, rfc_model_ypred)
+
+# Streamlit web app
+st.title("Credit Card Fraud Detection")
+st.write("Enter your credit card details")
+
+# Input for the prediction
+amt = st.text_input('Enter amount')
+lat = st.text_input("Enter customer latitude")
+long = st.text_input("Enter customer longitude")
+merch_lat = st.text_input("Enter merchant latitude")
+merch_long = st.text_input("Enter merchant longitude")
+cc_num = st.text_input('Enter your credit card number')
+
+# Input for the category details
+category_options = ["Select category"] + list(category_dummies.columns)
+category_result = st.selectbox("Select your Category", category_options)
+category_input = [1 if category == category_result else 0 for category in category_dummies.columns]
+
+# Input for the merchant details
+merchant_options = ["Select merchant"] + list(merchant_dummies.columns)
+merchant_result = st.selectbox("Select your Merchant", merchant_options)
+merchant_input = [1 if merchant == merchant_result else 0 for merchant in merchant_dummies.columns]
+
+# Submit button
+submit = st.button("Submit")
+
+if submit:
+    # Ensure that all input fields are non-empty before making predictions
+    if all([amt.strip(), lat.strip(), long.strip(), merch_lat.strip(), merch_long.strip(), cc_num.strip()]):
+        input_values = [float(amt), float(lat), float(long), float(merch_lat), float(merch_long), float(cc_num)] + category_input + merchant_input
+        input_array = np.array(input_values).reshape(1, -1)
+
+        prediction = rfc_model.predict(input_array)
+
+        if prediction == 0:
+            st.write("Safe Transaction")
+        else:
+            st.write("Fraudulent Transaction!")
+    else:
+        st.error("Please enter all inputs")
